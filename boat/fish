@@ -1,0 +1,114 @@
+import { Rarity, Fish, Rod, Boat, Island, Fisherman, DailyQuest, Perk, PlayerStats } from './types';
+
+export const RARITY_COLORS: Record<Rarity, string> = {
+  [Rarity.COMMON]: 'text-green-400',
+  [Rarity.UNCOMMON]: 'text-blue-400',
+  [Rarity.RARE]: 'text-purple-400',
+  [Rarity.EPIC]: 'text-orange-400',
+  [Rarity.LEGENDARY]: 'text-yellow-400',
+  [Rarity.DIVINE]: 'text-pink-400',
+  [Rarity.SECRET]: 'text-indigo-400',
+};
+
+export const INITIAL_STATS: PlayerStats = {
+  level: 1,
+  xp: 0,
+  prestige: 0,
+  perkPoints: 0,
+  gold: 50,
+  health: 100,
+  maxHealth: 100,
+  oxygen: 100,
+  maxOxygen: 100,
+  locationId: 1,
+  currentRodId: 1,
+  currentBoatId: null,
+  totalCasts: 0,
+  inventory: [],
+  ownedRods: [1],
+  ownedBoats: [],
+  discoveredFishIds: new Set<string>(),
+  deaths: 0,
+  activePerks: [],
+  hiredFishermen: [],
+  dailyQuests: [],
+  streak: 0,
+  lastDailyReset: 0,
+};
+
+export const getRequiredXP = (level: number): number => {
+  if (level < 100) return Math.floor(100 * Math.pow(level, 1.5));
+  if (level < 500) return 100000 + (level - 100) * 5000;
+  if (level < 1000) return 2500000 + (level - 500) * 20000;
+  if (level < 2000) return 10000000 + (level - 1000) * 50000;
+  if (level < 3000) return 40000000 + (level - 2000) * 100000;
+  return 90000000 + (level - 3000) * 500000;
+};
+
+export const PERKS: Perk[] = [
+  { id: 'luck_1', name: 'Fortune Favor', description: '+5% Luck permanently', effect: (s) => ({}) },
+  { id: 'xp_1', name: 'Quick Learner', description: '+10% XP Gain permanently', effect: (s) => ({}) },
+  { id: 'gold_1', name: 'Midas Touch', description: '+10% Gold from sales', effect: (s) => ({}) },
+  { id: 'speed_1', name: 'Swift Caster', description: '+5% Catch Speed', effect: (s) => ({}) },
+  { id: 'oxygen_1', name: 'Lung Expansion', description: '+20 Max Oxygen', effect: (s) => ({ maxOxygen: s.maxOxygen + 20 }) },
+  { id: 'health_1', name: 'Sturdy Frame', description: '+20 Max Health', effect: (s) => ({ maxHealth: s.maxHealth + 20 }) },
+];
+
+export const FISHERMEN: Fisherman[] = [
+  { id: 'old-pete', name: 'Old Pete', tier: 'Novice', hireCost: 50, dailyWage: 5, catchInterval: 120, rarityWeights: { [Rarity.COMMON]: 0, [Rarity.UNCOMMON]: 60, [Rarity.RARE]: 35, [Rarity.EPIC]: 5, [Rarity.LEGENDARY]: 0, [Rarity.DIVINE]: 0, [Rarity.SECRET]: 0 }, quote: "Been fishin' these docks for 40 years!" },
+  { id: 'captain-ironhook', name: 'Captain Ironhook', tier: 'Skilled', hireCost: 500, dailyWage: 25, catchInterval: 60, rarityWeights: { [Rarity.COMMON]: 0, [Rarity.UNCOMMON]: 30, [Rarity.RARE]: 50, [Rarity.EPIC]: 18, [Rarity.LEGENDARY]: 2, [Rarity.DIVINE]: 0, [Rarity.SECRET]: 0 }, quote: "I got even with that Megalodon!" },
+  { id: 'void-walker', name: 'Void Walker Zyx', tier: 'Legendary', hireCost: 100000, dailyWage: 0, catchInterval: 15, rarityWeights: { [Rarity.COMMON]: 0, [Rarity.UNCOMMON]: 0, [Rarity.RARE]: 3, [Rarity.EPIC]: 37, [Rarity.LEGENDARY]: 60, [Rarity.DIVINE]: 0, [Rarity.SECRET]: 0 }, quote: "I fish in the spaces between existence..." }
+];
+
+export const ISLANDS: Island[] = [
+  { id: 1, name: 'Starter Island', icon: '🏝️', tier: 'Starter', musicTheme: 'Peaceful Harbor Waves', colorScale: 'blue', rarityWeights: { [Rarity.COMMON]: 80, [Rarity.UNCOMMON]: 20, [Rarity.RARE]: 0, [Rarity.EPIC]: 0, [Rarity.LEGENDARY]: 0, [Rarity.DIVINE]: 0, [Rarity.SECRET]: 0 }, danger: 'Safe' },
+  { id: 4, name: 'Storm Watch Island', icon: '⛈️', tier: 'Intermediate', musicTheme: 'Thunder & Rain', colorScale: 'gray', rarityWeights: { [Rarity.COMMON]: 5, [Rarity.UNCOMMON]: 50, [Rarity.RARE]: 30, [Rarity.EPIC]: 15, [Rarity.LEGENDARY]: 0, [Rarity.DIVINE]: 0, [Rarity.SECRET]: 0 }, danger: 'Medium', hazard: 'Lightning Strike', minBoatSpeed: 40, minLevel: 25 },
+  { id: 7, name: 'The Abyss', icon: '🕳️', tier: 'Advanced', musicTheme: 'Deep Drone', colorScale: 'black', rarityWeights: { [Rarity.COMMON]: 0, [Rarity.UNCOMMON]: 0, [Rarity.RARE]: 30, [Rarity.EPIC]: 30, [Rarity.LEGENDARY]: 25, [Rarity.DIVINE]: 15, [Rarity.SECRET]: 0 }, danger: 'Extreme', isUnderwater: true, minBoatSpeed: 80, requiredCapability: 'Deep Sea', minLevel: 50 },
+  { id: 12, name: 'Void Waters', icon: '🌌', tier: 'Expert', musicTheme: 'Reality Distortion', colorScale: 'purple', rarityWeights: { [Rarity.COMMON]: 0, [Rarity.UNCOMMON]: 0, [Rarity.RARE]: 0, [Rarity.EPIC]: 5, [Rarity.LEGENDARY]: 20, [Rarity.DIVINE]: 35, [Rarity.SECRET]: 40 }, danger: 'LETHAL', hazard: 'Existence Drain', minBoatSpeed: 180, requiredCapability: 'Void Hull', minLevel: 100 }
+];
+
+export const BOATS: Boat[] = [
+  { id: 1, name: 'Wooden Raft', tier: 1, price: 50, speed: 15, durability: 'Low', access: [] },
+  { id: 14, name: 'Deep Sea Trawler', tier: 3, price: 6500, speed: 58, durability: 'Extreme', access: [], capabilities: ['Deep Sea'], minLevel: 25 },
+  { id: 29, name: 'Void Vessel', tier: 5, price: 65000, speed: 182, durability: 'Unstable', access: [], capabilities: ['Void Hull', 'Heat Resistant', 'Deep Sea'], minLevel: 100 },
+];
+
+export const RODS: Rod[] = [
+  { id: 1, name: 'Rusty Rod', rarity: Rarity.COMMON, luck: 0, speed: 1.0, price: 5, vibration: 'None' },
+  { id: 1701, name: 'Amethyst Dream Rod', rarity: Rarity.RARE, luck: 16, speed: 1.9, price: 1000, vibration: 'Purple Shift', minLevel: 15 },
+  { id: 2851, name: 'The First Rod', rarity: Rarity.DIVINE, luck: 85, speed: 7.5, price: 200000, vibration: 'Genesis Light', minLevel: 100 },
+];
+
+export const getFishSpecies = (rarity: Rarity): Fish[] => {
+  const data: Record<Rarity, string[]> = {
+    [Rarity.COMMON]: ['Sardine', 'Mackerel', 'Herring', 'Algae Minnow', 'Beach Crab', 'Clownfish', 'Catfish'],
+    [Rarity.UNCOMMON]: ['Salmon', 'Trout', 'Sea Bass', 'Azure Bass', 'Barracuda', 'Amber Jack', 'Arctic Char'],
+    [Rarity.RARE]: ['Swordfish', 'Tuna', 'Mahi-Mahi', 'Ancient Marlin', 'Abyssal Hunter', 'Grim Reaper Fish'],
+    [Rarity.EPIC]: ['Marlin', 'Giant Squid', 'Hammerhead Shark', 'Apex Predator', 'Celestial Guardian', 'Kraken Spawn'],
+    [Rarity.LEGENDARY]: ['Megalodon', 'Kraken', 'Leviathan', 'Ancient One', 'Atlantean King', 'Time Eater'],
+    [Rarity.DIVINE]: ['Phoenix Bass', 'Celestial Whale', 'Starlight Incarnate', 'God\'s Tears', 'Seraphim Bass'],
+    [Rarity.SECRET]: ['The Forbidden Catch', 'Void Serpent', 'Time Eater', 'Paradox Fish', 'The Final Mystery'],
+  };
+  
+  const xpMap: Record<Rarity, number> = { [Rarity.COMMON]: 5, [Rarity.UNCOMMON]: 15, [Rarity.RARE]: 40, [Rarity.EPIC]: 100, [Rarity.LEGENDARY]: 300, [Rarity.DIVINE]: 1000, [Rarity.SECRET]: 5000 };
+  const priceMap: Record<Rarity, number> = { [Rarity.COMMON]: 3, [Rarity.UNCOMMON]: 15, [Rarity.RARE]: 45, [Rarity.EPIC]: 150, [Rarity.LEGENDARY]: 750, [Rarity.DIVINE]: 4000, [Rarity.SECRET]: 25000 };
+
+  const names = data[rarity];
+  const name = names[Math.floor(Math.random() * names.length)];
+  
+  return [{
+    id: Math.random() * 1000000,
+    rarity,
+    name,
+    xp: xpMap[rarity],
+    price: priceMap[rarity],
+  }];
+};
+
+export const GENERATE_DAILY_QUESTS = (level: number): DailyQuest[] => {
+  return [
+    { id: 'q1', title: "Beginner's Luck", task: "Catch any fish", target: 5, current: 0, rewardXP: 50, rewardGold: 25, type: 'catch', completed: false, claimed: false },
+    { id: 'q2', title: "Uncommon Hunter", task: "Catch Uncommon+ fish", target: 3, current: 0, rewardXP: 100, rewardGold: 50, type: 'rarity', rarityTarget: Rarity.UNCOMMON, completed: false, claimed: false },
+    { id: 'q3', title: "Explorer", task: "Travel to another island", target: 1, current: 0, rewardXP: 75, rewardGold: 40, type: 'visit', completed: false, claimed: false }
+  ];
+};
