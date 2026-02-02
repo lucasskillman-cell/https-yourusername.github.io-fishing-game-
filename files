@@ -1,0 +1,28 @@
+import { Rarity, Fish } from "../types";
+
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+export async function getCatchDescription(fish: Fish): Promise<string> {
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: `You are a legendary fishing narrator. The player just caught a ${fish.rarity} ${fish.name}. Describe the epic battle or the beauty of this catch in 2 short, exciting sentences. Use pixel-game style flavor text.`,
+    });
+    return response.text?.trim() || `You reeled in a ${fish.name}! A fine addition to your collection.`;
+  } catch (error) {
+    console.error("Gemini Error:", error);
+    return `You reeled in a ${fish.name}!`;
+  }
+}
+
+export async function getNPCDialogue(npcName: string, playerLevel: number): Promise<string> {
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: `You are ${npcName}, an NPC in a 3D pixel fishing game. The player is level ${playerLevel}. Give them a piece of cryptic advice or a salty greeting in 2 sentences.`,
+    });
+    return response.text?.trim() || "Watch the tides, youngster. The deep ones are restless today.";
+  } catch (error) {
+    return "The sea is full of mysteries.";
+  }
+}
