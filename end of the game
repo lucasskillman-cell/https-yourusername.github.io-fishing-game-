@@ -1,0 +1,129 @@
+export enum Rarity {
+  COMMON = 'COMMON',
+  UNCOMMON = 'UNCOMMON',
+  RARE = 'RARE',
+  EPIC = 'EPIC',
+  LEGENDARY = 'LEGENDARY',
+  DIVINE = 'DIVINE',
+  SECRET = 'SECRET'
+}
+
+export interface Fish {
+  id: number;
+  name: string;
+  rarity: Rarity;
+  xp: number;
+  price: number;
+  description?: string;
+}
+
+export interface Rod {
+  id: number;
+  name: string;
+  rarity: Rarity;
+  luck: number;
+  speed: number;
+  price: number;
+  vibration: string;
+  minLevel?: number;
+}
+
+export interface Boat {
+  id: number;
+  name: string;
+  tier: number;
+  price: number;
+  speed: number;
+  durability: string;
+  access: string[];
+  special?: string;
+  oxygenBonus?: number;
+  capabilities?: string[];
+  minLevel?: number;
+}
+
+export interface Island {
+  id: number;
+  name: string;
+  icon: string;
+  tier: 'Starter' | 'Intermediate' | 'Advanced' | 'Expert' | 'Legendary';
+  rarityWeights: Record<Rarity, number>;
+  danger: string;
+  hazard?: string;
+  isUnderwater?: boolean;
+  minBoatSpeed?: number;
+  requiredCapability?: string;
+  musicTheme: string;
+  colorScale: string;
+  minLevel?: number;
+}
+
+export interface DailyQuest {
+  id: string;
+  title: string;
+  task: string;
+  target: number;
+  current: number;
+  rewardXP: number;
+  rewardGold: number;
+  type: 'catch' | 'visit' | 'sell' | 'rarity';
+  rarityTarget?: Rarity;
+  completed: boolean;
+  claimed: boolean;
+}
+
+export interface Fisherman {
+  id: string;
+  name: string;
+  tier: 'Novice' | 'Skilled' | 'Master' | 'Legendary';
+  hireCost: number;
+  dailyWage: number;
+  catchInterval: number; // minutes
+  rarityWeights: Record<Rarity, number>;
+  quote: string;
+  special?: string;
+  failureRate?: number;
+}
+
+export interface HiredFisherman {
+  id: string;
+  fishermanId: string;
+  hiredAt: number;
+  lastCollectedAt: number;
+  currentCatches: Fish[];
+  locationId: number;
+  loyalty: number;
+}
+
+export interface Perk {
+  id: string;
+  name: string;
+  description: string;
+  effect: (stats: PlayerStats) => Partial<PlayerStats>;
+}
+
+export interface PlayerStats {
+  level: number;
+  xp: number;
+  prestige: number;
+  perkPoints: number;
+  gold: number;
+  health: number;
+  maxHealth: number;
+  oxygen: number;
+  maxOxygen: number;
+  locationId: number;
+  currentRodId: number;
+  currentBoatId: number | null;
+  totalCasts: number;
+  inventory: Fish[];
+  ownedRods: number[];
+  ownedBoats: number[];
+  discoveredFishIds: Set<string>;
+  deaths: number;
+  activePerks: string[];
+  hiredFishermen: HiredFisherman[];
+  dailyQuests: DailyQuest[];
+  streak: number;
+  lastDailyReset: number;
+}
