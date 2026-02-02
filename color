@@ -1,0 +1,113 @@
+import React, { useEffect, useRef } from 'react';
+
+interface VoxelSceneProps {
+  isCasting: boolean;
+  isUnderwater: boolean;
+  colorScale: string;
+}
+
+export const VoxelScene: React.FC<VoxelSceneProps> = ({ isCasting, isUnderwater, colorScale }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let frame = 0;
+    let animationId: number;
+
+    const render = () => {
+      frame++;
+      const { width, height } = canvas;
+      ctx.clearRect(0, 0, width, height);
+
+      // Environmental Colors
+      let waterColor = '#1e3a8a';
+      let deepColor = '#001a33';
+      let waveColor = '#3b82f6';
+
+      switch (colorScale) {
+        case 'red': 
+          waterColor = '#450a0a'; waveColor = '#dc2626'; deepColor = '#000000';
+          break;
+        case 'gray':
+          waterColor = '#374151'; waveColor = '#9ca3af'; deepColor = '#111827';
+          break;
+        case 'purple':
+          waterColor = '#2e1065'; waveColor = '#a855f7'; deepColor = '#020617';
+          break;
+        case 'black':
+          waterColor = '#000000'; waveColor = '#1e1b4b'; deepColor = '#000000';
+          break;
+      }
+
+      const bgColor = isUnderwater ? deepColor : waterColor;
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, width, height);
+
+      // Waves
+      ctx.fillStyle = waveColor;
+      for (let i = 0; i < 12; i++) {
+        const y = height * 0.4 + Math.sin(frame * 0.015 + i) * 15 + i * 25;
+        const alpha = Math.max(0, 1 - (i / 12));
+        ctx.globalAlpha = alpha;
+        ctx.fillRect(0, y, width, 4);
+      }
+      ctx.globalAlpha = 1.0;
+
+      // Dock or Boat
+      if (!isUnderwater) {
+        ctx.fillStyle = '#4b2c20'; // Wooden brown
+        ctx.fillRect(width * 0.35, height * 0.55, width * 0.3, 40);
+        
+        // Piles
+        ctx.fillStyle = '#2d1a12';
+        ctx.fillRect(width * 0.38, height * 0.55, 10, height);
+        ctx.fillRect(width * 0.60, height * 0.55, 10, height);
+      }
+
+      // Fishing Line
+      if (isCasting) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath();
+        ctx.moveTo(width * 0.5, height * 0.52);
+        const targetY = height * 0.75 + Math.sin(frame * 0.08) * 6;
+        ctx.lineTo(width * 0.5, targetY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Bobber
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(width * 0.5 - 4, targetY - 4, 8, 8);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(width * 0.5 - 4, targetY, 8, 4);
+      }
+
+      // Player Placeholder (Pixel Style)
+      ctx.fillStyle = '#fde047'; // Hat
+      ctx.fillRect(width * 0.47, height * 0.42, 20, 8);
+      ctx.fillStyle = '#111827'; // Face/Shadow
+      ctx.fillRect(width * 0.47, height * 0.45, 20, 15);
+      ctx.fillStyle = '#dc2626'; // Shirt
+      ctx.fillRect(width * 0.46, height * 0.5, 24, 20);
+
+      animationId = requestAnimationFrame(render);
+    };
+
+    render();
+    return () => cancelAnimationFrame(animationId);
+  }, [isCasting, isUnderwater, colorScale]);
+
+  return (
+    <canvas 
+      ref={canvasRef} 
+      width={800} 
+      height={600} 
+      className="w-full h-full object-cover"
+    />
+  );
+};
