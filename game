@@ -1,0 +1,557 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { PlayerStats, Rarity, Fish, Island, Boat, Rod, Fisherman, HiredFisherman, DailyQuest, Perk } from './types';
+import { INITIAL_STATS, ISLANDS, RODS, BOATS, FISHERMEN, getFishSpecies, RARITY_COLORS, GENERATE_DAILY_QUESTS, getRequiredXP, PERKS } from './constants';
+import { VoxelScene } from './components/VoxelScene';
+import { getCatchDescription, getNPCDialogue } from './services/geminiService';
+
+export default function App() {
+  const [stats, setStats] = useState<PlayerStats>(INITIAL_STATS);
+  const [isCasting, setIsCasting] = useState(false);
+  const [isReeling, setIsReeling] = useState(false);
+  const [reelingProgress, setReelingProgress] = useState(50); // 0-100 (Line)
+  const [fishPosition, setFishPosition] = useState(50); // 0-100 (Gary)
+  const [captureProgress, setCaptureProgress] = useState(0); // 0-100
+  const [message, setMessage] = useState('Welcome to Coral Bay Harbor!');
+  const [activeTab, setActiveTab] = useState<'main' | 'inventory' | 'shop' | 'travel' | 'encyclopedia' | 'workers' | 'quests' | 'perks'>('main');
+  const [npcDialogue, setNpcDialogue] = useState<string>('');
+  const [pendingCatch, setPendingCatch] = useState<Fish | null>(null);
+
+  const currentIsland = ISLANDS.find(i => i.id === stats.locationId) || ISLANDS[0];
+  const currentRod = RODS.find(r => r.id === stats.currentRodId) || RODS[0];
+  const currentBoat = BOATS.find(b => b.id === stats.currentBoatId) || null;
+
+  // Initialize Daily Quests and handle reset
+  useEffect(() => {
+    const today = new Date().setHours(0,0,0,0);
+    if (stats.lastDailyReset < today) {
+      setStats(prev => ({
+        ...prev,
+        dailyQuests: GENERATE_DAILY_QUESTS(prev.level),
+        lastDailyReset: today,
+        streak: prev.dailyQuests.length > 0 && prev.dailyQuests.every(q => q.claimed) ? prev.streak + 1 : 0
+      }));
+    }
+  }, []);
+
+  // Game Loop: Hazards, Oxygen, and Worker Progress
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setStats(prev => {
+        let newHealth = prev.health;
+        let newOxygen = prev.oxygen;
+        let newMessage = message;
+
+        if (currentIsland.isUnderwater) {
+          const depletionRate = currentBoat?.capabilities?.includes('Deep Sea') ? 1 : 4;
+          newOxygen = Math.max(0, prev.oxygen - depletionRate);
+        } else {
+          newOxygen = Math.min(prev.maxOxygen, prev.oxygen + 10);
+        }
+
+        const updatedWorkers = prev.hiredFishermen.map(worker => {
+          const config = FISHERMEN.find(f => f.id === worker.fishermanId);
+          if (!config) return worker;
+          const now = Date.now();
+          const elapsedMinutes = (now - worker.lastCollectedAt) / (1000 * 60);
+          
+          if (elapsedMinutes >= config.catchInterval) {
+            const numNewCatches = Math.floor(elapsedMinutes / config.catchInterval);
+            const newCatches: Fish[] = [];
+            for (let i = 0; i < numNewCatches; i++) {
+              if (config.failureRate && Math.random() < config.failureRate) continue;
+              const roll = Math.random() * 100;
+              let cumulative = 0;
+              let selectedRarity = Rarity.UNCOMMON;
+              for (const [rarity, weight] of Object.entries(config.rarityWeights)) {
+                cumulative += weight;
+                if (roll <= cumulative) {
+                  selectedRarity = rarity as Rarity;
+                  break;
+                }
+              }
+              newCatches.push(getFishSpecies(selectedRarity)[0]);
+            }
+            return {
+              ...worker,
+              lastCollectedAt: now - (elapsedMinutes % config.catchInterval) * 60000,
+              currentCatches: [...worker.currentCatches, ...newCatches]
+            };
+          }
+          return worker;
+        });
+
+        if (newOxygen <= 0 && prev.oxygen > 0) newHealth = 0;
+        if (newHealth <= 0) {
+          newMessage = "YOU PERISHED! Returning to harbor... (-25g)";
+          return {
+            ...prev,
+            health: 100,
+            oxygen: 100,
+            gold: Math.max(0, prev.gold - 25),
+            locationId: 1,
+            deaths: prev.deaths + 1,
+            inventory: [],
+            hiredFishermen: updatedWorkers
+          };
+        }
+
+        return { ...prev, health: newHealth, oxygen: newOxygen, hiredFishermen: updatedWorkers };
+      });
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [currentIsland, currentBoat, message]);
+
+  // Reeling Mini-game logic (Gary vs Line)
+  useEffect(() => {
+    if (!isReeling) return;
+
+    const gameLoop = setInterval(() => {
+      setFishPosition(prev => {
+        const drift = (Math.random() - 0.5) * 12;
+        const newPos = prev + drift;
+        return Math.min(85, Math.max(15, newPos));
+      });
+
+      const distance = Math.abs(reelingProgress - fishPosition);
+      if (distance < 12) {
+        setCaptureProgress(prev => Math.min(100, prev + 3.0));
+      } else {
+        setCaptureProgress(prev => Math.max(0, prev - 2.0));
+      }
+    }, 100);
+
+    return () => clearInterval(gameLoop);
+  }, [isReeling, reelingProgress, fishPosition]);
+
+  useEffect(() => {
+    if (captureProgress >= 100 && isReeling) {
+      finalizeCatch();
+    }
+  }, [captureProgress]);
+
+  const handleCast = () => {
+    if (isCasting || isReeling) return;
+    setIsCasting(true);
+    setMessage('Casting your line...');
+
+    const waitTime = Math.max(800, 3000 / (currentRod.speed * (stats.activePerks.includes('speed_1') ? 1.05 : 1)));
+    
+    setTimeout(() => {
+      const luckBonus = stats.activePerks.includes('luck_1') ? 5 : 0;
+      const roll = Math.random() * 100;
+      let selectedRarity = Rarity.COMMON;
+      let cumulative = 0;
+      for (const [rarity, weight] of Object.entries(currentIsland.rarityWeights)) {
+        cumulative += weight;
+        if (roll <= (cumulative + luckBonus)) {
+          selectedRarity = rarity as Rarity;
+          break;
+        }
+      }
+      const fish = getFishSpecies(selectedRarity)[0];
+      setPendingCatch(fish);
+      setIsCasting(false);
+      setIsReeling(true);
+      setCaptureProgress(0);
+      setReelingProgress(50);
+      setMessage('A BITE! Keep the GREEN line on GARY (GREY)!');
+    }, waitTime);
+  };
+
+  const finalizeCatch = async () => {
+    setIsReeling(false);
+    if (!pendingCatch) return;
+
+    const caught = pendingCatch;
+    const desc = await getCatchDescription(caught);
+    setMessage(desc);
+    
+    setStats(prev => {
+      const xpMultiplier = prev.activePerks.includes('xp_1') ? 1.1 : 1;
+      const totalXP = caught.xp * xpMultiplier;
+      let nextXP = prev.xp + totalXP;
+      let nextLevel = prev.level;
+      let perkPoints = prev.perkPoints;
+
+      while (nextXP >= getRequiredXP(nextLevel)) {
+        nextXP -= getRequiredXP(nextLevel);
+        nextLevel++;
+        if (nextLevel % 10 === 0) perkPoints++;
+        setMessage(`LEVEL UP! You are now level ${nextLevel}!`);
+      }
+
+      const newDiscovered = new Set(prev.discoveredFishIds);
+      newDiscovered.add(caught.name);
+
+      const updatedQuests = prev.dailyQuests.map(q => {
+        if (q.type === 'catch') return { ...q, current: Math.min(q.target, q.current + 1), completed: q.current + 1 >= q.target };
+        if (q.type === 'rarity' && caught.rarity === q.rarityTarget) return { ...q, current: Math.min(q.target, q.current + 1), completed: q.current + 1 >= q.target };
+        return q;
+      });
+
+      return {
+        ...prev,
+        level: nextLevel,
+        xp: nextXP,
+        perkPoints,
+        inventory: [...prev.inventory, caught],
+        discoveredFishIds: newDiscovered,
+        totalCasts: prev.totalCasts + 1,
+        dailyQuests: updatedQuests
+      };
+    });
+    setPendingCatch(null);
+  };
+
+  const handlePrestige = () => {
+    if (stats.level < 1000) return;
+    if (!confirm("Are you sure you want to Prestige? You will return to Level 1, but keep all items and gain a Prestige Star!")) return;
+    
+    setStats(prev => ({
+      ...prev,
+      level: 1,
+      xp: 0,
+      prestige: prev.prestige + 1,
+      gold: prev.gold + 10000,
+      locationId: 1,
+      inventory: [],
+      perkPoints: prev.perkPoints + 1
+    }));
+    setMessage("PRESTIGED! Your journey begins anew with cosmic strength.");
+  };
+
+  const selectPerk = (perk: Perk) => {
+    if (stats.perkPoints <= 0 || stats.activePerks.includes(perk.id)) return;
+    setStats(prev => {
+      const effect = perk.effect(prev);
+      return {
+        ...prev,
+        perkPoints: prev.perkPoints - 1,
+        activePerks: [...prev.activePerks, perk.id],
+        ...effect
+      };
+    });
+    setMessage(`Unlocked Perk: ${perk.name}!`);
+  };
+
+  const hireWorker = (config: Fisherman) => {
+    if (stats.gold < config.hireCost) return setMessage("Not enough gold!");
+    if (stats.hiredFishermen.length >= (5 + (stats.level >= 250 ? 5 : 0))) return setMessage("Max employees reached!");
+    
+    const newWorker: HiredFisherman = {
+      id: Math.random().toString(36).substr(2, 9),
+      fishermanId: config.id,
+      hiredAt: Date.now(),
+      lastCollectedAt: Date.now(),
+      currentCatches: [],
+      locationId: stats.locationId,
+      loyalty: 0
+    };
+
+    setStats(prev => ({
+      ...prev,
+      gold: prev.gold - config.hireCost,
+      hiredFishermen: [...prev.hiredFishermen, newWorker]
+    }));
+    setMessage(`Hired ${config.name}!`);
+  };
+
+  const collectWorkerCatches = (workerId: string) => {
+    setStats(prev => {
+      const worker = prev.hiredFishermen.find(w => w.id === workerId);
+      if (!worker) return prev;
+      return {
+        ...prev,
+        inventory: [...prev.inventory, ...worker.currentCatches],
+        hiredFishermen: prev.hiredFishermen.map(w => w.id === workerId ? { ...w, currentCatches: [] } : w)
+      };
+    });
+    setMessage("Collected worker's bounty!");
+  };
+
+  const travel = (island: Island) => {
+    if (island.minLevel && stats.level < island.minLevel) return setMessage(`Level ${island.minLevel} required!`);
+    if (island.minBoatSpeed) {
+      const speed = currentBoat?.speed || 0;
+      if (speed < island.minBoatSpeed) return setMessage(`Boat too slow! Need ${island.minBoatSpeed} speed.`);
+    }
+    if (island.requiredCapability && !currentBoat?.capabilities?.includes(island.requiredCapability)) {
+      return setMessage(`Need ${island.requiredCapability} capability!`);
+    }
+    setStats(prev => {
+      const updatedQuests = prev.dailyQuests.map(q => {
+        if (q.type === 'visit') return { ...q, current: Math.min(q.target, q.current + 1), completed: q.current + 1 >= q.target };
+        return q;
+      });
+      return { ...prev, locationId: island.id, dailyQuests: updatedQuests };
+    });
+    setActiveTab('main');
+    setMessage(`Sailing to ${island.name}...`);
+  };
+
+  const sellFish = () => {
+    const multiplier = stats.activePerks.includes('gold_1') ? 1.1 : 1;
+    const value = Math.floor(stats.inventory.reduce((a, b) => a + b.price, 0) * multiplier);
+    setStats(prev => {
+       const updatedQuests = prev.dailyQuests.map(q => {
+        if (q.type === 'sell') return { ...q, current: Math.min(q.target, q.current + stats.inventory.length), completed: q.current + stats.inventory.length >= q.target };
+        return q;
+      });
+      return { ...prev, gold: prev.gold + value, inventory: [], dailyQuests: updatedQuests };
+    });
+    setMessage(`Sold catch for ${value}g.`);
+  };
+
+  const claimQuest = (questId: string) => {
+    const q = stats.dailyQuests.find(quest => quest.id === questId);
+    if (!q || !q.completed || q.claimed) return;
+    setStats(prev => ({
+      ...prev,
+      gold: prev.gold + q.rewardGold,
+      xp: prev.xp + q.rewardXP,
+      dailyQuests: prev.dailyQuests.map(quest => quest.id === questId ? { ...quest, claimed: true } : quest)
+    }));
+  };
+
+  return (
+    <div className="flex flex-col h-screen text-white overflow-hidden bg-black font-['Press_Start_2P']">
+      {/* HUD v5.3 */}
+      <div className="bg-black/90 border-b-4 border-white/20 p-4 grid grid-cols-2 lg:grid-cols-4 gap-4 text-[9px] z-20">
+        <div className="flex flex-col gap-2">
+          <div className="flex justify-between">
+            <span className="text-yellow-400">LVL {stats.level} / 4000</span>
+            <span className="text-white/40">{(stats.xp / 1000).toFixed(1)}k / {(getRequiredXP(stats.level) / 1000).toFixed(1)}k</span>
+          </div>
+          <div className="h-2 bg-gray-800 pixel-corners overflow-hidden border border-white/10">
+            <div className="bg-green-500 h-full transition-all duration-300" style={{ width: `${(stats.xp / getRequiredXP(stats.level)) * 100}%` }} />
+          </div>
+        </div>
+        <div className="flex flex-col gap-2">
+          <div className="flex justify-between">
+            <span className="text-red-500">HP {stats.health}/{stats.maxHealth}</span>
+            {stats.prestige > 0 && <span className="text-indigo-400">⭐ x{stats.prestige}</span>}
+          </div>
+          <div className="h-2 bg-gray-800 pixel-corners overflow-hidden border border-white/10">
+            <div className="bg-red-600 h-full" style={{ width: `${(stats.health / stats.maxHealth) * 100}%` }} />
+          </div>
+        </div>
+        <div className="flex flex-col gap-2">
+          <span className="text-blue-400">O2 {stats.oxygen}/{stats.maxOxygen}</span>
+          <div className="h-2 bg-gray-800 pixel-corners overflow-hidden border border-white/10">
+            <div className="bg-blue-500 h-full" style={{ width: `${(stats.oxygen / stats.maxOxygen) * 100}%` }} />
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-4">
+          <span className="text-yellow-400 text-[12px]">💰 {stats.gold.toLocaleString()}</span>
+        </div>
+      </div>
+
+      {/* VIEWPORT */}
+      <main className="flex-1 relative">
+        <VoxelScene 
+          isCasting={isCasting || isReeling} 
+          isUnderwater={currentIsland.isUnderwater || false} 
+          colorScale={currentIsland.colorScale}
+        />
+
+        {/* Overlay UI */}
+        <div className="absolute inset-0 p-6 pointer-events-none flex flex-col justify-between z-10">
+          <div className="bg-black/60 p-4 pixel-corners border-2 border-white/20 max-w-lg pointer-events-auto">
+            <div className="text-[11px] text-blue-300 mb-2 underline">{currentIsland.icon} {currentIsland.name}</div>
+            <div className="text-[9px] leading-relaxed min-h-[40px] uppercase">{message}</div>
+          </div>
+
+          <div className="flex flex-col items-center gap-4 pointer-events-auto mb-16">
+            {isReeling && (
+              <div className="w-full max-w-sm bg-black/95 p-6 border-4 border-white/20 pixel-corners shadow-[0_0_30px_rgba(0,0,0,0.9)]">
+                <div className="text-[8px] mb-4 text-center text-yellow-500 uppercase">REELING! KEEP GREEN ON GARY!</div>
+                <div className="relative h-14 bg-gray-900 border-4 border-gray-700 overflow-hidden mb-6 flex items-center">
+                  {/* Gary (Grey segment) */}
+                  <div 
+                    className="absolute h-full bg-gray-500 border-x-2 border-gray-300 shadow-[0_0_10px_rgba(255,255,255,0.4)]" 
+                    style={{ left: `${fishPosition - 6}%`, width: '12%', transition: 'left 0.1s linear' }}
+                  />
+                  {/* Line (Green segment) */}
+                  <div 
+                    className="absolute h-full bg-green-500 opacity-60 border-x-4 border-green-300" 
+                    style={{ left: `${reelingProgress - 10}%`, width: '20%', transition: 'left 0.05s ease-out' }}
+                  />
+                </div>
+                <div className="h-4 bg-gray-800 border-2 border-white/10 pixel-corners overflow-hidden mb-6">
+                  <div className="bg-yellow-400 h-full shadow-lg" style={{ width: `${captureProgress}%` }} />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <button 
+                    onMouseDown={() => setReelingProgress(p => Math.max(0, p - 8))}
+                    className="bg-blue-700 hover:bg-blue-600 py-4 pixel-corners text-[9px] border-b-4 border-blue-900"
+                  >REEL LEFT</button>
+                  <button 
+                    onMouseDown={() => setReelingProgress(p => Math.min(100, p + 8))}
+                    className="bg-blue-700 hover:bg-blue-600 py-4 pixel-corners text-[9px] border-b-4 border-blue-900"
+                  >REEL RIGHT</button>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'main' && !isReeling && (
+              <button 
+                onClick={handleCast}
+                disabled={isCasting}
+                className={`pixel-corners px-14 py-10 text-[12px] border-b-8 active:border-b-0 transition-all ${isCasting ? 'bg-gray-600 border-gray-800 opacity-50' : 'bg-blue-600 border-blue-800 hover:scale-105 active:translate-y-2'}`}
+              >
+                {isCasting ? '...' : 'CAST LINE'}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Perks Tab */}
+        {activeTab === 'perks' && (
+          <div className="absolute inset-0 bg-black/95 z-30 p-8 overflow-y-auto">
+            <div className="flex justify-between items-center mb-8 border-b-4 border-white/20 pb-4">
+              <h2 className="text-lg uppercase">PERKS ({stats.perkPoints} POINTS)</h2>
+              <button onClick={() => setActiveTab('main')} className="text-red-500">CLOSE</button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {PERKS.map(perk => (
+                <div 
+                  key={perk.id} 
+                  className={`p-6 border-4 pixel-corners ${stats.activePerks.includes(perk.id) ? 'bg-green-900/40 border-green-500' : stats.perkPoints > 0 ? 'bg-white/5 border-white/20 hover:bg-white/10' : 'bg-gray-900/50 border-gray-800 opacity-50'}`}
+                >
+                  <h3 className="text-[12px] mb-2 uppercase">{perk.name}</h3>
+                  <p className="text-[9px] text-white/60 mb-6 leading-relaxed">{perk.description}</p>
+                  {stats.activePerks.includes(perk.id) ? (
+                    <div className="text-green-400 text-[10px] text-center">UNLOCKED ✓</div>
+                  ) : (
+                    <button 
+                      onClick={() => selectPerk(perk)}
+                      disabled={stats.perkPoints <= 0}
+                      className="w-full bg-blue-700 py-2 text-[10px] pixel-corners disabled:opacity-50"
+                    >SELECT</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Inventory Tab */}
+        {activeTab === 'inventory' && (
+          <div className="absolute inset-0 bg-black/95 z-30 p-8 overflow-y-auto">
+            <div className="flex justify-between items-center mb-8 border-b-4 border-white/20 pb-4">
+              <h2 className="text-lg uppercase">INVENTORY ({stats.inventory.length})</h2>
+              <button onClick={() => setActiveTab('main')} className="text-red-500">CLOSE</button>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+              {stats.inventory.map((f, i) => (
+                <div key={i} className="bg-white/5 p-4 pixel-corners border-2 border-white/10 text-center">
+                  <div className={`text-[8px] mb-2 ${RARITY_COLORS[f.rarity]}`}>{f.rarity}</div>
+                  <div className="text-[9px] mb-4 uppercase">{f.name}</div>
+                  <div className="text-yellow-500 text-[8px]">{f.price}g</div>
+                </div>
+              ))}
+            </div>
+            {stats.inventory.length > 0 && (
+              <button onClick={sellFish} className="mt-8 w-full bg-yellow-600 py-4 pixel-corners text-[12px] hover:bg-yellow-500 border-b-4 border-yellow-800">SELL ALL CATCHES</button>
+            )}
+          </div>
+        )}
+
+        {/* Travel Tab */}
+        {activeTab === 'travel' && (
+          <div className="absolute inset-0 bg-black/95 z-30 p-8 overflow-y-auto">
+            <div className="flex justify-between items-center mb-8 border-b-4 border-white/20 pb-4">
+              <h2 className="text-lg uppercase">NAVIGATOR</h2>
+              <button onClick={() => setActiveTab('main')} className="text-red-500">CLOSE</button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              {ISLANDS.map(island => {
+                const isLocked = (island.minLevel && stats.level < island.minLevel);
+                return (
+                  <div 
+                    key={island.id} 
+                    onClick={() => !isLocked && travel(island)}
+                    className={`p-6 pixel-corners border-4 transition-all ${isLocked ? 'opacity-30 border-gray-800' : stats.locationId === island.id ? 'bg-blue-900 border-blue-400' : 'bg-white/5 border-white/20 hover:bg-white/10 cursor-pointer'}`}
+                  >
+                    <div className="flex justify-between mb-2">
+                      <span className="text-3xl">{island.icon}</span>
+                      <span className="text-[9px] text-white/40">{island.tier}</span>
+                    </div>
+                    <h3 className="text-[14px] uppercase font-bold">{island.name}</h3>
+                    <div className="mt-4 text-[9px] flex flex-col gap-1">
+                      <span className="text-red-500">DANGER: {island.danger}</span>
+                      {island.minLevel && <span className="text-yellow-500">REQ LVL: {island.minLevel}</span>}
+                      {isLocked && <span className="text-red-400 mt-2">[LOCKED]</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Main Quest / Daily Quest Tab */}
+        {activeTab === 'quests' && (
+          <div className="absolute inset-0 bg-black/95 z-30 p-8 overflow-y-auto">
+             <div className="flex justify-between items-center mb-8 border-b-4 border-white/20 pb-4">
+              <h2 className="text-lg uppercase">QUESTS (🔥 {stats.streak} STREAK)</h2>
+              <button onClick={() => setActiveTab('main')} className="text-red-500">CLOSE</button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {stats.dailyQuests.map(q => (
+                <div key={q.id} className={`p-6 border-4 pixel-corners ${q.claimed ? 'bg-gray-900/50 border-gray-800 opacity-60' : 'bg-white/5 border-white/20'}`}>
+                  <div className="flex justify-between mb-4">
+                    <span className="text-[11px] uppercase">{q.title}</span>
+                    <span className="text-yellow-500 text-[10px]">+{q.rewardGold}g</span>
+                  </div>
+                  <p className="text-[9px] text-white/60 mb-4">{q.task} ({q.current}/{q.target})</p>
+                  <div className="h-3 bg-gray-800 pixel-corners overflow-hidden border border-white/10 mb-6">
+                    <div className="bg-blue-500 h-full transition-all" style={{ width: `${(q.current / q.target) * 100}%` }} />
+                  </div>
+                  {q.completed && !q.claimed ? (
+                    <button onClick={() => claimQuest(q.id)} className="w-full bg-green-600 py-3 text-[10px] pixel-corners border-b-4 border-green-900">CLAIM</button>
+                  ) : q.claimed ? (
+                    <div className="text-green-500 text-[9px] text-center">COMPLETED ✓</div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Prestige System Visual Hint */}
+        {stats.level >= 1000 && activeTab === 'main' && (
+          <div className="absolute top-24 right-6 pointer-events-auto">
+             <button 
+              onClick={handlePrestige}
+              className="bg-indigo-700 hover:bg-indigo-600 px-6 py-3 pixel-corners text-[10px] border-b-4 border-indigo-900 animate-pulse"
+             >
+               PRESTIGE AVAILABLE!
+             </button>
+          </div>
+        )}
+      </main>
+
+      {/* FOOTER NAV v5.3 */}
+      <nav className="bg-black/90 p-4 grid grid-cols-6 gap-2 border-t-4 border-white/20 z-40">
+        {[
+          { id: 'main', icon: '🏠', label: 'HOME' },
+          { id: 'inventory', icon: '🪣', label: 'FISH' },
+          { id: 'travel', icon: '🗺️', label: 'MAP' },
+          { id: 'quests', icon: '🎯', label: 'TASK' },
+          { id: 'perks', icon: '⭐', label: 'PERK' },
+          { id: 'workers', icon: '👥', label: 'CREW' }
+        ].map(btn => (
+          <button 
+            key={btn.id}
+            onClick={() => setActiveTab(btn.id as any)} 
+            className={`flex flex-col items-center justify-center p-2 pixel-corners transition-all ${activeTab === btn.id ? 'bg-blue-600 border-b-4 border-blue-900 translate-y-[-2px]' : 'bg-gray-800'}`}
+          >
+            <span className="text-[14px] mb-1">{btn.icon}</span>
+            <span className="text-[6px] tracking-tighter uppercase">{btn.label}</span>
+          </button>
+        ))}
+      </nav>
+    </div>
+  );
+}
